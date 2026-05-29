@@ -1,0 +1,60 @@
+# SentinelOne → GLPI 资产同步服务配置
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+scheduler:
+  interval_seconds: 300
+  run_on_start: true
+
+# 支持多个 S1 控制台，每个实例用 name 区分
+sentinelone_instances:
+  - name: "HK"
+    base_url: "https://hk.sentinelone.net"
+    api_token: "YOUR_HK_S1_API_TOKEN"
+    page_size: 500
+  - name: "SZ"
+    base_url: "https://sz.sentinelone.net"
+    api_token: "YOUR_SZ_S1_API_TOKEN"
+    page_size: 500
+
+glpi:
+  base_url: "https://glpi.example.com/apirest.php"
+  app_token: "YOUR_GLPI_APP_TOKEN"
+  user_token: "YOUR_GLPI_USER_TOKEN"
+  field_mapping:
+    computerName: "name"
+    osName: "operatingsystems_id"
+    domain: "domains_id"
+    modelName: "computermodels_id"
+    serialNumber: "serial"
+    ip: "ip_address"
+    agentVersion: "comment"
+
+lark:
+  webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_HOOK_ID"
+  enabled: true
+  notify_types:
+    - "new_asset"
+    - "changed_asset"
+    - "bidirectional_sync"
+
+bidirectional_sync:
+  enabled: false             # 总开关
+  dry_run: true              # true=只检测不写入，false=真正执行
+  overwrite_existing: false  # false=只写空字段（推荐），true=也覆盖已有值
+  uuid_to_glpi: true         # S1 uuid → GLPI uuid
+  contact_to_s1: true        # GLPI contact → S1 externalId
+
+token_refresh:
+  enabled: true              # S1 API Token 自动刷新
+  threshold_days: 7          # 剩余 < 7 天时自动刷新
+  check_interval_hours: 24   # 每 24 小时检查
+
+cache:
+  db_path: "./data/cache.db"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
