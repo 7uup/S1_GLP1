@@ -41,7 +41,7 @@ class GLPIConfig(BaseModel):
         "modelName": "computermodels_id",
         "serialNumber": "serial",
         "ip": "ip_address",
-        "agentVersion": "comment",
+        "machineConfig": "comment",
     })
 
 
@@ -52,12 +52,14 @@ class LarkConfig(BaseModel):
 
 
 class BidirectionalSyncConfig(BaseModel):
-    """双向回写配置：S1 uuid → GLPI, GLPI contact → S1 externalId"""
+    """同步回写配置：S1 ↔ GLPI 字段、配置备注、历史使用者"""
     enabled: bool = False         # 总开关
     dry_run: bool = True          # True=只检测不写入，False=真正执行
     overwrite_existing: bool = False  # True=覆盖已有值，False=只写空字段（安全默认）
     uuid_to_glpi: bool = True     # S1 agent uuid → GLPI Computer uuid
     contact_to_s1: bool = True    # GLPI contact → S1 agent externalId
+    machine_config_to_glpi: bool = True  # S1 CPU/内存 → GLPI Computer comment
+    historical_user_to_glpi: bool = True  # S1 externalId / GLPI contact → GLPI Notepad
 
 
 class TokenRefreshConfig(BaseModel):

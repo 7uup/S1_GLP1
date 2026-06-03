@@ -1,4 +1,4 @@
-"""核心同步逻辑 — S1 uuid ↔ GLPI uuid / GLPI contact ↔ S1 externalId"""
+"""核心同步逻辑 — S1 uuid ↔ GLPI uuid / GLPI contact ↔ S1 externalId / 机器配置和历史使用者同步"""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class SyncService:
             self._running = False
 
     async def _do_sync(self) -> dict[str, Any]:
-        """同步流程：仅双向回写 S1 ↔ GLPI"""
+        """同步流程：S1 ↔ GLPI 字段回写和机器配置备注同步"""
         logger.info("=== Sync started ===")
 
         # 1. 从所有 S1 控制台拉取 Agent
@@ -100,11 +100,15 @@ class SyncService:
                 f"uuid_ok={len(bi_result.uuid_synced)}, "
                 f"uuid_fail={len(bi_result.uuid_failed)}, "
                 f"contact_ok={len(bi_result.contact_synced)}, "
-                f"contact_fail={len(bi_result.contact_failed)}"
+                f"contact_fail={len(bi_result.contact_failed)}, "
+                f"config_ok={len(bi_result.config_synced)}, "
+                f"config_fail={len(bi_result.config_failed)}, "
+                f"history_ok={len(bi_result.historical_user_synced)}, "
+                f"history_fail={len(bi_result.historical_user_failed)}"
             )
             await self.cache.log_sync(
-                len(bi_result.uuid_synced) + len(bi_result.contact_synced),
-                len(bi_result.uuid_failed) + len(bi_result.contact_failed),
+                bi_result.total_ok,
+                bi_result.total_fail,
                 len(agents), detail,
             )
 
@@ -118,6 +122,10 @@ class SyncService:
                 "uuid_fail": len(bi_result.uuid_failed),
                 "contact_ok": len(bi_result.contact_synced),
                 "contact_fail": len(bi_result.contact_failed),
+                "config_ok": len(bi_result.config_synced),
+                "config_fail": len(bi_result.config_failed),
+                "history_ok": len(bi_result.historical_user_synced),
+                "history_fail": len(bi_result.historical_user_failed),
             }
         logger.info("=== Sync completed: %s ===", result)
         return result
@@ -126,6 +134,8 @@ class SyncService:
         """双向回写：
         A. S1 agent uuid → GLPI Computer uuid
         B. GLPI contact → S1 agent externalId
+        C. S1 CPU/内存 → GLPI Computer comment
+        D. S1 externalId / GLPI contact → GLPI Computer Notepad
 
         安全机制：
         - 本地 SQLite 记录已同步的 serial，不依赖 S1 API 返回 externalId
@@ -161,6 +171,7 @@ class SyncService:
                     "name": comp.get("name", ""),
                     "uuid": (comp.get("uuid") or "").strip(),
                     "contact": (comp.get("contact") or "").strip(),
+                    "comment": (comp.get("comment") or "").strip(),
                 }
 
         # 构建 agent_id → S1Client 映射（用于后续写入 externalId）
@@ -293,13 +304,145 @@ class SyncService:
                         agent.console_name, agent.computer_name, e,
                     )
 
+        # ── C. S1 机器配置 → GLPI 备注 ───────────────────────
+        if bi_cfg.machine_config_to_glpi:
+            logger.info("  C) Syncing S1 machine config → GLPI comment %s...", mode_tag)
+            for agent in agents:
+                if not agent.serial_number:
+                    continue
+                machine_config = agent.machine_config_comment()
+                if not machine_config:
+                    continue
+
+                serial = agent.serial_number.strip()
+                glpi_info = glpi_by_serial.get(serial)
+                if not glpi_info:
+                    continue
+
+                current_comment = glpi_info["comment"]
+                new_comment = self._merge_machine_config_comment(
+                    current_comment, machine_config,
+                )
+                if new_comment == current_comment:
+                    continue
+
+                item = BidirectionalSyncItem(
+                    serial=serial,
+                    computer_name=agent.computer_name,
+                    console_name=agent.console_name,
+                    glpi_id=glpi_info["id"],
+                    machine_config=machine_config,
+                )
+
+                # dry_run: 只记录，不写入
+                if bi_cfg.dry_run:
+                    logger.info(
+                        "[%s]%s GLPI computer %d (%s) comment <- %s",
+                        agent.console_name, mode_tag,
+                        glpi_info["id"], agent.computer_name,
+                        machine_config.replace("\n", " | "),
+                    )
+                    result.config_synced.append(item)
+                    continue
+
+                # 真正写入
+                try:
+                    await self.glpi.set_computer_comment(glpi_info["id"], new_comment)
+                    glpi_info["comment"] = new_comment
+                    result.config_synced.append(item)
+                except Exception as e:
+                    item.success = False
+                    item.error = str(e)
+                    result.config_failed.append(item)
+                    logger.error(
+                        "[%s] Failed to set comment for GLPI %d (%s): %s",
+                        agent.console_name, glpi_info["id"],
+                        agent.computer_name, e,
+                    )
+
+        # ── D. S1 externalId / GLPI contact → GLPI Notepad ─
+        if bi_cfg.historical_user_to_glpi:
+            logger.info("  D) Syncing historical user → GLPI Notepad %s...", mode_tag)
+            for agent in agents:
+                if not agent.serial_number:
+                    continue
+
+                serial = agent.serial_number.strip()
+                glpi_info = glpi_by_serial.get(serial)
+                if not glpi_info:
+                    continue
+
+                historical_user, historical_user_source = agent.historical_user_source(
+                    glpi_info["contact"]
+                )
+                if not historical_user:
+                    continue
+
+                content = f"历史使用者：{historical_user}"
+                item = BidirectionalSyncItem(
+                    serial=serial,
+                    computer_name=agent.computer_name,
+                    console_name=agent.console_name,
+                    glpi_id=glpi_info["id"],
+                    historical_user=historical_user,
+                    historical_user_source=historical_user_source,
+                )
+
+                try:
+                    notes = await self.glpi.get_computer_notepads(glpi_info["id"])
+                    if any(content == (n.get("content") or "").strip() for n in notes):
+                        continue
+
+                    # dry_run: 只记录，不写入
+                    if bi_cfg.dry_run:
+                        logger.info(
+                            "[%s]%s GLPI computer %d (%s) notepad <- %s (%s)",
+                            agent.console_name, mode_tag,
+                            glpi_info["id"], agent.computer_name,
+                            content, historical_user_source,
+                        )
+                        result.historical_user_synced.append(item)
+                        continue
+
+                    await self.glpi.add_computer_notepad(glpi_info["id"], content)
+                    result.historical_user_synced.append(item)
+                except Exception as e:
+                    item.success = False
+                    item.error = str(e)
+                    result.historical_user_failed.append(item)
+                    logger.error(
+                        "[%s] Failed to add historical user for GLPI %d (%s): %s",
+                        agent.console_name, glpi_info["id"],
+                        agent.computer_name, e,
+                    )
+
         # ── 通知 ─────────────────────────────────────────────
         await self.lark.notify_bidirectional(result)
 
         logger.info(
-            "=== Bidirectional sync done %s: uuid_ok=%d/uuid_fail=%d, contact_ok=%d/contact_fail=%d ===",
+            "=== Sync done %s: uuid_ok=%d/uuid_fail=%d, contact_ok=%d/contact_fail=%d, config_ok=%d/config_fail=%d, history_ok=%d/history_fail=%d ===",
             mode_tag,
             len(result.uuid_synced), len(result.uuid_failed),
             len(result.contact_synced), len(result.contact_failed),
+            len(result.config_synced), len(result.config_failed),
+            len(result.historical_user_synced), len(result.historical_user_failed),
         )
         return result
+
+    @staticmethod
+    def _merge_machine_config_comment(existing_comment: str, machine_config: str) -> str:
+        """替换已有 CPU/内存行，同时保留其它备注内容"""
+        machine_config = machine_config.strip()
+        existing_comment = (existing_comment or "").replace("\r\n", "\n").strip()
+        if not existing_comment:
+            return machine_config
+
+        preserved_lines: list[str] = []
+        for line in existing_comment.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("CPU:", "CPU：", "内存:", "内存：")):
+                continue
+            preserved_lines.append(line)
+
+        preserved = "\n".join(preserved_lines).strip()
+        return f"{machine_config}\n\n{preserved}" if preserved else machine_config

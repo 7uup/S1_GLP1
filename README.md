@@ -128,6 +128,8 @@ sentinelone_instances:
 | sentinelone_instances[].page_size   | 500     | S1 API 分页大小            |
 | lark.enabled                        | false   | 是否启用飞书通知           |
 | lark.notify_types                   | both    | 通知类型                   |
+| bidirectional_sync.machine_config_to_glpi | true | 是否把 S1 CPU/内存写入 GLPI 备注 |
+| bidirectional_sync.historical_user_to_glpi | true | 是否把 S1 externalId / GLPI contact 写入 GLPI Notepad |
 | cache.db_path                       | ./data/cache.db | SQLite 路径         |
 
 ### GLPI 字段映射
@@ -143,7 +145,20 @@ glpi:
     modelName: "computermodels_id"
     serialNumber: "serial"
     ip: "ip_address"
-    agentVersion: "comment"
+    machineConfig: "comment"
+```
+
+`machineConfig` 会生成写入 GLPI `comment` 的机器配置备注，格式如下：
+
+```text
+CPU: Apple M2 Max (1 CPU / 12 核)
+内存：32 GB
+```
+
+历史使用者优先使用 S1 `externalId`，为空时使用 GLPI `contact`，并写入 GLPI Computer 的 Notepad：
+
+```text
+历史使用者：username
 ```
 
 ## 扩展指南
@@ -152,8 +167,8 @@ glpi:
 - **新增数据源**：参考 `s1_client.py`，实现新的 `XxxClient` 并在 `sync.py` 中接入
 - **新增目标系统**：参考 `glpi_client.py`，实现新的 `YyyClient`
 - **新增通知渠道**：参考 `lark_notify.py`，实现新的通知器
-- **新增同步字段**：修改 `models.py` 中的 `COMPARE_FIELDS` 和 `to_cache_dict()`
-- **自定义同步策略**：修改 `sync.py` 中的 `_detect_changes()` 和 `_sync_to_glpi()`
+- **新增同步字段**：修改 `models.py` 中的 `S1Agent` 和 `to_cache_dict()`
+- **自定义同步策略**：修改 `sync.py` 中的 `_bidirectional_sync()`
 
 ## License
 

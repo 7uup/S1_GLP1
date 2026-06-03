@@ -84,7 +84,7 @@ class LarkNotifier:
             return False
 
     async def notify_bidirectional(self, result: BidirectionalSyncResult) -> None:
-        """发送双向同步结果通知"""
+        """发送同步结果通知"""
         if not self.enabled or not self.webhook_url or not result.has_any:
             return
         if "bidirectional_sync" not in self.notify_types:
@@ -123,14 +123,60 @@ class LarkNotifier:
             for item in result.contact_failed[:5]:
                 lines.append(f"• [{item.console_name}] {item.computer_name}: {item.error}")
 
-        text = f"双向同步完成: UUID={len(result.uuid_synced)}/{len(result.uuid_failed)} fail, Contact={len(result.contact_synced)}/{len(result.contact_failed)} fail"
+        if result.config_synced:
+            lines.append(f"\n**S1 机器配置 → GLPI 备注 ({len(result.config_synced)} 台):**")
+            for item in result.config_synced[:10]:
+                lines.append(f"• [{item.console_name}] {item.computer_name}")
+                lines.append(f"  {item.machine_config.replace(chr(10), ' | ')}")
+            if len(result.config_synced) > 10:
+                lines.append(f"  ... 还有 {len(result.config_synced) - 10} 台")
+
+        if result.config_failed:
+            lines.append(f"\n**机器配置备注同步失败 ({len(result.config_failed)} 台):**")
+            for item in result.config_failed[:5]:
+                lines.append(f"• [{item.console_name}] {item.computer_name}: {item.error}")
+
+        if result.historical_user_synced:
+            lines.append(
+                f"\n**历史使用者 → GLPI Notepad ({len(result.historical_user_synced)} 台):**"
+            )
+            for item in result.historical_user_synced[:10]:
+                lines.append(f"• [{item.console_name}] {item.computer_name}")
+                lines.append(
+                    f"  历史使用者：{item.historical_user} ({item.historical_user_source})"
+                )
+            if len(result.historical_user_synced) > 10:
+                lines.append(f"  ... 还有 {len(result.historical_user_synced) - 10} 台")
+
+        if result.historical_user_failed:
+            lines.append(
+                f"\n**历史使用者同步失败 ({len(result.historical_user_failed)} 台):**"
+            )
+            for item in result.historical_user_failed[:5]:
+                lines.append(f"• [{item.console_name}] {item.computer_name}: {item.error}")
+
+        text = (
+            f"同步完成: "
+            f"UUID 成功 {len(result.uuid_synced)} / 失败 {len(result.uuid_failed)}, "
+            f"Contact 成功 {len(result.contact_synced)} / 失败 {len(result.contact_failed)}, "
+            f"配置备注成功 {len(result.config_synced)} / 失败 {len(result.config_failed)}, "
+            f"历史使用者成功 {len(result.historical_user_synced)} / "
+            f"失败 {len(result.historical_user_failed)}"
+        )
         lines.insert(0, text + "\n")
 
         await self._send_simple_card(
-            title=f"S1 ↔ GLPI 双向同步{dry_tag}",
+            title=f"S1 ↔ GLPI 同步{dry_tag}",
             content="\n".join(lines),
             color="blue",
-            note=f"UUID={len(result.uuid_synced)}/{len(result.uuid_synced)+len(result.uuid_failed)}  Contact={len(result.contact_synced)}/{len(result.contact_synced)+len(result.contact_failed)}{overwrite_tag}",
+            note=(
+                f"UUID={len(result.uuid_synced)}/{len(result.uuid_synced)+len(result.uuid_failed)}  "
+                f"Contact={len(result.contact_synced)}/{len(result.contact_synced)+len(result.contact_failed)}  "
+                f"Config={len(result.config_synced)}/{len(result.config_synced)+len(result.config_failed)}"
+                f"  History={len(result.historical_user_synced)}/"
+                f"{len(result.historical_user_synced)+len(result.historical_user_failed)}"
+                f"{overwrite_tag}"
+            ),
         )
 
     async def _send_simple_card(

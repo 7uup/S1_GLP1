@@ -30,7 +30,7 @@ glpi:
     modelName: "computermodels_id"
     serialNumber: "serial"
     ip: "ip_address"
-    agentVersion: "comment"
+    machineConfig: "comment"
 
 lark:
   webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_HOOK_ID"
@@ -46,6 +46,8 @@ bidirectional_sync:
   overwrite_existing: false  # false=只写空字段（推荐），true=也覆盖已有值
   uuid_to_glpi: true         # S1 uuid → GLPI uuid
   contact_to_s1: true        # GLPI contact → S1 externalId
+  machine_config_to_glpi: true # S1 CPU/内存 → GLPI comment
+  historical_user_to_glpi: true # S1 externalId / GLPI contact → GLPI Notepad
 
 token_refresh:
   enabled: true              # S1 API Token 自动刷新

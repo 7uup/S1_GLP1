@@ -72,7 +72,7 @@ class GLPIClient:
     # ── 批量查询（双向同步用） ──────────────────────────────
 
     async def get_all_computers_full(self) -> list[dict]:
-        """获取所有 Computer 的 ID、serial、uuid、contact（用于双向同步匹配）"""
+        """获取所有 Computer 的 ID、serial、uuid、contact、comment（用于同步匹配）"""
         assert self._client
 
         all_items: list[dict] = []
@@ -120,6 +120,68 @@ class GLPIClient:
             )
         resp.raise_for_status()
         logger.info("Set uuid for GLPI Computer %d: %s", computer_id, uuid_val)
+        return True
+
+    async def set_computer_comment(self, computer_id: int, comment: str) -> bool:
+        """设置 GLPI Computer 的 comment 字段（S1 机器配置 → GLPI 备注）"""
+        assert self._client
+        resp = await self._client.put(
+            f"/Computer/{computer_id}",
+            json={"input": {"comment": comment}},
+            headers=self._headers(),
+        )
+        if resp.status_code == 401:
+            await self._init_session()
+            resp = await self._client.put(
+                f"/Computer/{computer_id}",
+                json={"input": {"comment": comment}},
+                headers=self._headers(),
+            )
+        resp.raise_for_status()
+        logger.info("Set comment for GLPI Computer %d", computer_id)
+        return True
+
+    async def get_computer_notepads(self, computer_id: int) -> list[dict]:
+        """获取 GLPI Computer 的 Notepad 记录"""
+        assert self._client
+        resp = await self._client.get(
+            f"/Computer/{computer_id}/Notepad",
+            headers=self._headers(),
+        )
+        if resp.status_code == 401:
+            await self._init_session()
+            resp = await self._client.get(
+                f"/Computer/{computer_id}/Notepad",
+                headers=self._headers(),
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else []
+
+    async def add_computer_notepad(self, computer_id: int, content: str) -> bool:
+        """新增 GLPI Computer 的 Notepad 记录"""
+        assert self._client
+        payload = {
+            "input": {
+                "itemtype": "Computer",
+                "items_id": computer_id,
+                "content": content,
+            }
+        }
+        resp = await self._client.post(
+            f"/Computer/{computer_id}/Notepad",
+            json=payload,
+            headers=self._headers(),
+        )
+        if resp.status_code == 401:
+            await self._init_session()
+            resp = await self._client.post(
+                f"/Computer/{computer_id}/Notepad",
+                json=payload,
+                headers=self._headers(),
+            )
+        resp.raise_for_status()
+        logger.info("Added Notepad for GLPI Computer %d", computer_id)
         return True
 
     # ── CRUD ────────────────────────────────────────────────
